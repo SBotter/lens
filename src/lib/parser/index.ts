@@ -23,4 +23,4 @@ import './parsers/video/dji';
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 export { registry }                             from './registry';
-export type { ParseResult, ActivityPoint, VideoPoint, ActivityMeta, VideoMeta, FileInput, Parser } from './types';
+export type { ParseResult, ActivityJSON, VideoPoint, ActivityMetadata, VideoMeta, FileInput, Parser } from './types';

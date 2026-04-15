@@ -56,12 +56,13 @@ export default function ParserPage() {
       try {
         console.log(`[Lens] Parsing ${file.name} with ${parser.displayName}...`);
         const result = await parser.parse(file);
-        updateLog(id, {
-          status: 'done',
-          kind:   result.kind,
-          points: result.points.length,
-          device: result.meta.deviceName,
-        });
+        const pts    = result.kind === 'activity'
+          ? result.data.activity.timeline.length
+          : result.points.length;
+        const device = result.kind === 'activity'
+          ? result.data.activity.metadata.device
+          : result.meta.deviceName;
+        updateLog(id, { status: 'done', kind: result.kind, points: pts, device });
         console.log(`[Lens] ${file.name} →`, result);
       } catch (err: unknown) {
         const msg = (err instanceof Error) ? err.message : String(err);
