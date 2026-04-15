@@ -38,11 +38,20 @@ const GoProParser: Parser = {
 
   async parse(file: FileInput): Promise<ParseResult> {
     // ── Extract raw GPMF stream from MP4 ──────────────────────────────────
-    const isBrowser = typeof window !== 'undefined';
-    let extracted: Awaited<ReturnType<typeof gpmfExtract>>;
+    // gpmf-extract has two overloads: browser (File/Blob) and Node (Buffer).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let extracted: any;
 
     try {
-      extracted = await gpmfExtract(file as unknown as File, { browserMode: isBrowser });
+      const isBrowser = typeof window !== 'undefined';
+      if (isBrowser) {
+        extracted = await gpmfExtract(file as unknown as File, { browserMode: true });
+      } else {
+        const ab  = await file.arrayBuffer();
+        const buf = Buffer.from(ab);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        extracted = await (gpmfExtract as any)(buf);
+      }
     } catch (err: unknown) {
       throw new Error(`GoPro: GPMF extraction failed — ${(err as Error).message}`);
     }
@@ -53,7 +62,7 @@ const GoProParser: Parser = {
       telemetry = await goproTelemetry(extracted, {
         stream:    ['GPS5', 'ACCL', 'GYRO', 'CORI'],
         progress:  () => {},
-      }) as Record<string, unknown>;
+      }) as unknown as Record<string, unknown>;
     } catch (err: unknown) {
       throw new Error(`GoPro: telemetry decode failed — ${(err as Error).message}`);
     }

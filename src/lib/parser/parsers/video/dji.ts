@@ -8,7 +8,7 @@
  * DJI filename patterns: DJI_XXXX, DJI-XXXXXX
  */
 
-import MP4Box     from 'mp4box';
+import * as MP4Box from 'mp4box';
 import { registry } from '../../registry';
 import type { Parser, FileInput, ParseResult, VideoMeta } from '../../types';
 
@@ -49,7 +49,8 @@ async function probeDjiMp4(
     const mp4 = MP4Box.createFile();
     let resolved = false;
 
-    mp4.onReady = (info: Record<string, unknown>) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mp4.onReady = (info: any) => {
       if (resolved) return;
       resolved = true;
       const durationS = Number(info.duration);

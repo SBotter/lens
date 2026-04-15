@@ -39,9 +39,11 @@ const FitActivityParser: Parser = {
         mode:           'cascade', // returns nested structure
       });
 
-      parser.parse(buffer as Buffer, (err: Error | null, result: Record<string, unknown>) => {
-        if (err) reject(err);
-        else     resolve(result);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      parser.parse(buffer as any, (err: any, result: any) => {
+        if (err) reject(new Error(String(err)));
+        else     resolve(result as Record<string, unknown>);
       });
     });
 
