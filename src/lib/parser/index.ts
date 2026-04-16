@@ -17,10 +17,10 @@ import './parsers/activity/fit';
 
 // ── Video parsers ─────────────────────────────────────────────────────────────
 import './parsers/video/gopro';
-import './parsers/video/iphone';
 import './parsers/video/insta360';
 import './parsers/video/dji';
+import './parsers/video/mobile';  // catch-all for .mov/.mp4 — must be last
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 export { registry }                             from './registry';
-export type { ParseResult, ActivityJSON, VideoPoint, ActivityMetadata, VideoMeta, FileInput, Parser } from './types';
+export type { ParseResult, ActivityJSON, VideoJSON, ActivityMetadata, FileInput, Parser } from './types';

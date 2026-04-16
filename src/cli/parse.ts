@@ -53,11 +53,15 @@ function logVerbose(result: ParseResult): void {
     console.log(`    points:      ${timeline.length}`);
     console.log(`    quality:     ${(quality.overallScore * 100).toFixed(0)}%  gps: ${(quality.gpsQuality.signalConsistency * 100).toFixed(0)}%`);
   } else {
-    console.log(`    device:     ${result.meta.deviceName}`);
-    console.log(`    startTime:  ${new Date(result.meta.startTime).toISOString()}`);
-    console.log(`    durationMs: ${result.meta.durationMs}`);
-    console.log(`    points:     ${result.points.length}`);
-    console.log(`    hasGPS:     ${result.meta.hasGPS}`);
+    const v = result.data.video;
+    console.log(`    device:     ${v.metadata.device}`);
+    console.log(`    fileName:   ${v.metadata.fileName}`);
+    console.log(`    duration:   ${v.metadata.duration}s  fps: ${v.metadata.fps ?? '?'}  res: ${v.metadata.resolution ?? '?'}`);
+    console.log(`    startTime:  ${new Date(v.time.startTimeUtc).toISOString()}`);
+    console.log(`    points:     ${v.timeline.length}  segments: ${v.segments.length}`);
+    console.log(`    gpsLock:    ${v.alignmentHints.gpsLockOffsetMs}ms offset  syncScore: ${v.alignmentHints.syncScore}`);
+    console.log(`    features:   gps=${v.features.hasGps} gyro=${v.features.hasGyro} audio=${v.features.hasAudio} stabilization=${v.features.hasStabilization}`);
+    console.log(`    quality:    overall=${(v.quality.overallScore*100).toFixed(0)}%  gps=${(v.quality.gpsQuality*100).toFixed(0)}%  stability=${(v.quality.stabilityScore*100).toFixed(0)}%`);
   }
 }
 
@@ -65,7 +69,7 @@ function logVerbose(result: ParseResult): void {
 
 function pointCount(result: ParseResult): number {
   if (result.kind === 'activity') return result.data.activity.timeline.length;
-  return result.points.length;
+  return result.data.video.timeline.length;
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -146,7 +150,9 @@ async function main(): Promise<void> {
 
   if (videoResults.length > 0) {
     const outPath = path.join(outDir, 'video.json');
-    const payload = videoResults.length === 1 ? videoResults[0] : videoResults;
+    const payload = videoResults.length === 1
+      ? (videoResults[0].kind === 'video' ? videoResults[0].data : videoResults[0])
+      : videoResults.map(r => r.kind === 'video' ? r.data : r);
     await fs.writeFile(outPath, JSON.stringify(payload, null, 2), 'utf-8');
     const pts = videoResults.reduce((s, r) => s + pointCount(r), 0);
     console.log(`  [OUT] video.json    — ${pts} points`);

@@ -1,18 +1,18 @@
 /**
- * iPhone QuickTime binary parsing helpers.
+ * MP4 / QuickTime binary parsing helpers.
  *
- * These functions parse the ISOBMFF/QuickTime container to extract:
- *   - CreateDate (UTC) and Duration from the mvhd box
- *   - Make, Model, and optional GPS from the meta/keys/ilst boxes
+ * Originally for iPhone MOV; extended to cover all ISOBMFF/QuickTime files
+ * (GoPro MP4, Samsung Galaxy MP4, iPhone MP4, etc.).
  *
- * Ported from prorefuel-poc/src/lib/workers/iphone.worker.ts.
  * All functions use only Uint8Array + ArrayBuffer — fully isomorphic (browser + Node.js).
  * The FileInput.slice() call is the only I/O boundary.
  *
- * Why native parsing and not exifr:
- *   exifr 7.x does not support QuickTime brand ('qt  ') files.
- *   All iPhone cameras record pure QuickTime MOV — not MPEG-4/MP4.
- *   exifr throws "Unknown file format" on every iPhone MOV.
+ * Key exports:
+ *   findMoovContent   — ranged read of moov regardless of file layout
+ *   findBox / findAllBoxes — box tree traversal
+ *   parseMvhd         — creation time + duration (Mac epoch → Unix)
+ *   parseMeta         — Apple QuickTime make/model/GPS from meta/keys/ilst
+ *   probeVideoTrack   — fps / resolution / codec / hasAudio from moov binary
  */
 
 import type { FileInput } from '../../types';
@@ -239,4 +239,160 @@ export function parseMeta(moov: Uint8Array): MetaResult {
   }
 
   return result;
+}
+
+// ── Multi-box scanner ────────────────────────────────────────────────────────
+
+/**
+ * Collect all immediate child boxes of a given type from a flat Uint8Array.
+ * Returns an array of box content buffers (header stripped).
+ */
+export function findAllBoxes(d: Uint8Array, type: string): Uint8Array[] {
+  const results: Uint8Array[] = [];
+  let pos = 0;
+  while (pos + 8 <= d.length) {
+    const size32 = u32(d, pos);
+    const t      = fourcc(d, pos + 4);
+    let totalSize = size32;
+    let hdrSize   = 8;
+    if (size32 === 1 && pos + 16 <= d.length) {
+      totalSize = u64(d, pos + 8);
+      hdrSize   = 16;
+    } else if (size32 === 0) {
+      totalSize = d.length - pos;
+    }
+    if (totalSize < 8) break;
+    if (t === type) {
+      results.push(d.subarray(pos + hdrSize, Math.min(pos + totalSize, d.length)));
+    }
+    pos += totalSize;
+  }
+  return results;
+}
+
+// ── Video track probe ─────────────────────────────────────────────────────────
+
+export interface ContainerInfo {
+  fps:        number | null;
+  resolution: string | null;
+  codec:      string | null;
+  durationMs: number | null;
+  hasAudio:   boolean;
+}
+
+function resolveResolution(w: number, h: number): string {
+  if (w >= 3840) return '4K';
+  if (w >= 2704) return '2.7K';
+  if (w >= 1920) return '1080p';
+  if (w >= 1280) return '720p';
+  return `${w}x${h}`;
+}
+
+function resolveCodec(tag: string): string {
+  const c = tag.toLowerCase();
+  if (c.startsWith('avc1') || c.startsWith('avc ')) return 'H.264';
+  if (c.startsWith('hvc1') || c.startsWith('hev1')) return 'H.265';
+  if (c.startsWith('vp08'))                          return 'VP8';
+  if (c.startsWith('vp09'))                          return 'VP9';
+  if (c.startsWith('av01'))                          return 'AV1';
+  return tag;
+}
+
+/**
+ * Extract fps / resolution / codec / hasAudio / durationMs from raw moov bytes.
+ *
+ * Traversal:
+ *   moov/mvhd           → durationMs (fallback)
+ *   moov/trak[]/mdia/hdlr → identifies video ('vide') and audio ('soun') tracks
+ *   moov/trak/tkhd       → width × height (16.16 fixed-point)
+ *   moov/trak/mdia/mdhd  → timescale
+ *   moov/trak/mdia/minf/stbl/stts → sample delta → fps
+ *   moov/trak/mdia/minf/stbl/stsd → codec fourcc
+ */
+export function probeVideoTrack(moov: Uint8Array): ContainerInfo {
+  // mvhd fallback duration
+  let durationMs: number | null = null;
+  const mvhd = findBox(moov, 'mvhd');
+  if (mvhd && mvhd.length >= 20) {
+    const ver = mvhd[0];
+    if (ver === 0) {
+      const ts = u32(mvhd, 12);
+      const dur = u32(mvhd, 16);
+      if (ts > 0) durationMs = Math.round((dur / ts) * 1000);
+    } else if (ver === 1 && mvhd.length >= 32) {
+      const ts  = u32(mvhd, 20);
+      const dur = u64(mvhd, 24);
+      if (ts > 0) durationMs = Math.round((dur / ts) * 1000);
+    }
+  }
+
+  let fps: number | null = null;
+  let resolution: string | null = null;
+  let codec: string | null = null;
+  let hasAudio = false;
+
+  const traks = findAllBoxes(moov, 'trak');
+
+  // First pass: detect audio
+  for (const trak of traks) {
+    const mdia = findBox(trak, 'mdia');
+    if (!mdia) continue;
+    const hdlr = findBox(mdia, 'hdlr');
+    if (hdlr && hdlr.length >= 12 && fourcc(hdlr, 8) === 'soun') {
+      hasAudio = true;
+      break;
+    }
+  }
+
+  // Second pass: extract video track info
+  for (const trak of traks) {
+    const mdia = findBox(trak, 'mdia');
+    if (!mdia) continue;
+    const hdlr = findBox(mdia, 'hdlr');
+    if (!hdlr || hdlr.length < 12 || fourcc(hdlr, 8) !== 'vide') continue;
+
+    // tkhd: resolution (width × height as 16.16 fixed-point)
+    // v0 offset 76, v1 offset 88
+    const tkhd = findBox(trak, 'tkhd');
+    if (tkhd) {
+      const wOff = tkhd[0] === 1 ? 88 : 76;
+      if (tkhd.length >= wOff + 8) {
+        const w = u32(tkhd, wOff) >>> 16;
+        const h = u32(tkhd, wOff + 4) >>> 16;
+        if (w > 0 && h > 0) resolution = resolveResolution(w, h);
+      }
+    }
+
+    // mdhd: media timescale
+    const mdhd = findBox(mdia, 'mdhd');
+    let mediaTimescale = 90000;
+    if (mdhd && mdhd.length >= 20) {
+      mediaTimescale = mdhd[0] === 1 ? u32(mdhd, 20) : u32(mdhd, 12);
+    }
+
+    const minf = findBox(mdia, 'minf');
+    if (minf) {
+      const stbl = findBox(minf, 'stbl');
+      if (stbl) {
+        // stts: version(1)+flags(3)+entry_count(4)+[sample_count(4)+sample_delta(4)…]
+        const stts = findBox(stbl, 'stts');
+        if (stts && stts.length >= 16) {
+          const delta = u32(stts, 12);  // first entry's sample_delta
+          if (delta > 0 && mediaTimescale > 0) {
+            fps = Math.round((mediaTimescale / delta) * 10) / 10;
+          }
+        }
+
+        // stsd: version(1)+flags(3)+entry_count(4)+[size(4)+codec(4)…]
+        const stsd = findBox(stbl, 'stsd');
+        if (stsd && stsd.length >= 16) {
+          codec = resolveCodec(fourcc(stsd, 12));
+        }
+      }
+    }
+
+    break;  // first video track is enough
+  }
+
+  return { fps, resolution, codec, durationMs, hasAudio };
 }
