@@ -58,10 +58,10 @@ export default function ParserPage() {
         const result = await parser.parse(file);
         const pts    = result.kind === 'activity'
           ? result.data.activity.timeline.length
-          : result.points.length;
+          : result.data.video.timeline.length;
         const device = result.kind === 'activity'
           ? result.data.activity.metadata.device
-          : result.meta.deviceName;
+          : result.data.video.metadata.device;
         updateLog(id, { status: 'done', kind: result.kind, points: pts, device });
         console.log(`[Lens] ${file.name} →`, result);
       } catch (err: unknown) {

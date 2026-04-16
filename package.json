@@ -23,7 +23,6 @@
     "fit-file-parser": "^2.3.3",
     "gopro-telemetry": "^1.2.11",
     "gpmf-extract": "^0.3.3",
-    "mp4box": "^2.3.0",
     "next": "^16.2.3",
     "postcss": "^8.5.10",
     "react": "^19.2.5",

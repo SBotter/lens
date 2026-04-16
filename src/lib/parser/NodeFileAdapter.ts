@@ -11,8 +11,10 @@
  * Only imported in CLI / Node.js paths. Never bundled into the browser build.
  */
 
-import fs   from 'node:fs/promises';
-import path from 'node:path';
+import fs             from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { Readable }   from 'node:stream';
+import path           from 'node:path';
 import type { FileInput, FileSlice } from './types';
 
 export class NodeFileAdapter implements FileInput {
@@ -70,5 +72,20 @@ export class NodeFileAdapter implements FileInput {
   /** Read the entire file as UTF-8 text. */
   async text(): Promise<string> {
     return fs.readFile(this.filePath, 'utf-8');
+  }
+
+  /**
+   * Return a Web ReadableStream over the file.
+   *
+   * gpmf-extract checks `file.stream` first — if present, it skips the
+   * `new Blob([file]).stream()` fallback that breaks in Node 22 (Blob is
+   * globally defined but NodeFileAdapter is not a valid Blob source).
+   *
+   * Readable.toWeb() is available in Node 18+.
+   */
+  stream(): ReadableStream<Uint8Array> {
+    const nodeReadable = createReadStream(this.filePath);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (Readable as any).toWeb(nodeReadable) as ReadableStream<Uint8Array>;
   }
 }

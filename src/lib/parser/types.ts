@@ -187,26 +187,100 @@ export interface ActivityJSON {
   };
 }
 
-// ── Video types (placeholder — schema TBD) ────────────────────────────────────
+// ── Video JSON schema ─────────────────────────────────────────────────────────
 
-export interface VideoPoint {
-  lat:    number;
-  lon:    number;
-  ele:    number;
-  time:   number;
-  speed?: number;
-  accel?: [number, number, number];
-  gyro?:  [number, number, number];
+export interface VideoMetadata {
+  source:       string;        // 'gopro' | 'iphone' | 'samsung' | 'pixel' | 'insta360' | 'dji' | 'mobile'
+  device:       string;        // e.g. "GoPro Hero 11", "Galaxy S25 Ultra"
+  fileName:     string;
+  duration:     number;        // seconds
+  fps:          number | null; // from moov/trak/stts binary parsing
+  resolution:   string | null; // '4K' | '2.7K' | '1080p' | '720p' | 'WxH'
+  codec:        string | null; // 'H.264' | 'H.265' | 'VP9' | 'AV1'
+  creationTime: number;        // Unix ms UTC (first GPS timestamp or container date)
+  timezone:     string;        // 'UTC' for GPS-based devices
+  fileSizeMB:   number;
 }
 
-export interface VideoMeta {
-  sourceFormat:     VideoFormat;
-  deviceName:       string;
-  startTime:        number;
-  durationMs:       number;
-  pointCount:       number;
-  gpsVideoOffsetMs: number;
-  hasGPS:           boolean;
+export interface VideoTime {
+  startTimeUtc:    number;  // Unix ms
+  endTimeUtc:      number;  // Unix ms
+  duration:        number;  // seconds
+  clockConfidence: number;  // 0-1: GoPro GPS=1.0, iPhone=0.9
+}
+
+export interface VideoSpatial {
+  hasGps:      boolean;
+  boundingBox: { minLat: number; maxLat: number; minLon: number; maxLon: number } | null;
+}
+
+export interface VideoTimelinePoint {
+  t:         number;        // seconds from video start (float)
+  timestamp: number;        // Unix ms UTC
+  fix:       0 | 2 | 3;    // GPS fix quality (0=none, 2=2D, 3=3D)
+  frame: {
+    index: number;          // Math.round(t × fps) — 0 when fps unknown
+  };
+  position: {
+    lat: number;
+    lon: number;
+    ele: number;            // meters
+  };
+  movement: {
+    speed:    number;       // m/s
+    gpsSpeed: boolean;      // true = value comes from GPS sensor
+  };
+  sensors: {
+    gForce?: number;                          // ACCL 3D magnitude in g
+    accel?:  [number, number, number];        // raw [x,y,z] in m/s² (for NCC)
+    gyro?:   { x: number; y: number; z: number }; // raw vector (rad/s)
+  };
+  quality: {
+    stability:  number;     // 0-1 (derived from gyro magnitude)
+    motionBlur: number;     // 0-1 (derived from angular velocity)
+  };
+}
+
+export interface VideoSegment {
+  id:         string;
+  startT:     number;    // seconds from video start
+  endT:       number;    // seconds from video start
+  type:       'high_motion' | 'low_motion' | 'static';
+  confidence: number;    // 0-1
+}
+
+export interface VideoFeatures {
+  hasGps:           boolean;
+  hasAccelerometer: boolean;
+  hasGyro:          boolean;
+  hasAudio:         boolean;
+  hasStabilization: boolean;
+}
+
+export interface VideoAlignmentHints {
+  hasAbsoluteTime:  boolean;  // GPS UTC timestamps available
+  hasGpsTrack:      boolean;
+  gpsLockOffsetMs:  number;   // ms from video start until GPS locked (0 = locked from start)
+  syncScore:        number;   // 0-1 composite sync readiness
+}
+
+export interface VideoQuality {
+  overallScore:   number;  // 0-1
+  stabilityScore: number;  // 0-1 (mean gyro stability)
+  gpsQuality:     number;  // 0-1 (fraction of points with fix >= 2)
+}
+
+export interface VideoJSON {
+  video: {
+    metadata:       VideoMetadata;
+    time:           VideoTime;
+    spatial:        VideoSpatial;
+    timeline:       VideoTimelinePoint[];
+    segments:       VideoSegment[];
+    features:       VideoFeatures;
+    alignmentHints: VideoAlignmentHints;
+    quality:        VideoQuality;
+  };
 }
 
 // ── ParseResult union ─────────────────────────────────────────────────────────
@@ -217,9 +291,8 @@ export type ParsedActivity = {
 };
 
 export type ParsedVideo = {
-  kind:   'video';
-  points: VideoPoint[];
-  meta:   VideoMeta;
+  kind: 'video';
+  data: VideoJSON;
 };
 
 export type ParseResult = ParsedActivity | ParsedVideo;

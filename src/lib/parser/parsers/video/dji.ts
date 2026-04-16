@@ -1,22 +1,19 @@
 /**
- * DJI MP4 Video Parser — Phase 1 Stub
+ * DJI MP4 Video Parser — Phase 1
  *
- * Phase 1: extracts container metadata (duration, device name) via mp4box.
- * GPS telemetry extraction using DJI's CAMM (Camera Motion Metadata Spec)
- * will be added in Phase 2.
- *
- * DJI filename patterns: DJI_XXXX, DJI-XXXXXX
+ * Extracts container metadata (fps, resolution, codec, duration, creation time).
+ * GPS telemetry via DJI CAMM track or SRT sidecar — Phase 2.
  */
 
-import * as MP4Box from 'mp4box';
+import { findMoovContent, findBox, parseMvhd, probeVideoTrack } from './_isobmff';
 import { registry } from '../../registry';
-import type { Parser, FileInput, ParseResult, VideoMeta } from '../../types';
+import type { Parser, FileInput, ParseResult, VideoJSON } from '../../types';
 
 const DJI_RE = /^DJI[_\-]/i;
 
 const DjiParser: Parser = {
   id:          'dji-mp4',
-  displayName: 'DJI (MP4 — stub)',
+  displayName: 'DJI (MP4)',
 
   canParse(file: FileInput): boolean {
     const name = file.name.toLowerCase();
@@ -25,56 +22,58 @@ const DjiParser: Parser = {
   },
 
   async parse(file: FileInput): Promise<ParseResult> {
-    const { duration, creationTime, deviceName } = await probeDjiMp4(file);
+    const moov = await findMoovContent(file);
 
-    const meta: VideoMeta = {
-      sourceFormat:     'dji-mp4',
-      deviceName:       deviceName ?? 'DJI',
-      startTime:        creationTime ?? 0,
-      durationMs:       duration ?? 0,
-      pointCount:       0,
-      gpsVideoOffsetMs: 0,
-      hasGPS:           false,
+    let durationMs   = 0;
+    let creationTime = 0;
+    let container    = { fps: null as number | null, resolution: null as string | null, codec: null as string | null, hasAudio: false, durationMs: null as number | null };
+
+    if (moov) {
+      const mvhdData = findBox(moov, 'mvhd');
+      if (mvhdData) {
+        const mvhd = parseMvhd(mvhdData);
+        if (mvhd) {
+          durationMs   = mvhd.durationMs;
+          creationTime = mvhd.createDateMs;
+        }
+      }
+      container = probeVideoTrack(moov);
+      if (container.durationMs != null) durationMs = container.durationMs;
+    }
+
+    const durationS = durationMs / 1000;
+
+    const data: VideoJSON = {
+      video: {
+        metadata: {
+          source:       'dji',
+          device:       'DJI',
+          fileName:     file.name,
+          duration:     Math.round(durationS * 100) / 100,
+          fps:          container.fps,
+          resolution:   container.resolution,
+          codec:        container.codec,
+          creationTime,
+          timezone:     'UTC',
+          fileSizeMB:   Math.round((file.size / 1024 / 1024) * 100) / 100,
+        },
+        time: {
+          startTimeUtc:    creationTime,
+          endTimeUtc:      creationTime + durationMs,
+          duration:        Math.round(durationS * 100) / 100,
+          clockConfidence: 0.8,
+        },
+        spatial:        { hasGps: false, boundingBox: null },
+        timeline:       [],
+        segments:       [],
+        features:       { hasGps: false, hasAccelerometer: false, hasGyro: false, hasAudio: container.hasAudio, hasStabilization: true },
+        alignmentHints: { hasAbsoluteTime: creationTime > 0, hasGpsTrack: false, gpsLockOffsetMs: 0, syncScore: 0.3 },
+        quality:        { overallScore: 0.3, stabilityScore: 0, gpsQuality: 0 },
+      },
     };
 
-    console.warn('[DJI] GPS telemetry extraction not yet implemented (Phase 1 stub)');
-    return { kind: 'video', points: [], meta };
+    return { kind: 'video', data };
   },
 };
-
-async function probeDjiMp4(
-  file: FileInput,
-): Promise<{ duration?: number; creationTime?: number; deviceName?: string }> {
-  return new Promise((resolve) => {
-    const mp4 = MP4Box.createFile();
-    let resolved = false;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mp4.onReady = (info: any) => {
-      if (resolved) return;
-      resolved = true;
-      const durationS = Number(info.duration);
-      const ts        = Number(info.timescale);
-      const creation  = info.created instanceof Date ? info.created.getTime() : undefined;
-      // DJI embeds the drone model in the movie fragment comment
-      const brands    = (info.compatible_brands as string[] | undefined) ?? [];
-      const deviceName = brands.find(b => b.toLowerCase().includes('dji'));
-      resolve({
-        duration:     ts > 0 ? Math.round(durationS / ts * 1000) : undefined,
-        creationTime: creation,
-        deviceName,
-      });
-    };
-
-    mp4.onError = () => { if (!resolved) { resolved = true; resolve({}); } };
-
-    file.slice(0, 512 * 1024).arrayBuffer().then((ab) => {
-      (ab as any).fileStart = 0;
-      mp4.appendBuffer(ab as ArrayBuffer & { fileStart: number });
-      mp4.flush();
-      setTimeout(() => { if (!resolved) { resolved = true; resolve({}); } }, 3000);
-    }).catch(() => resolve({}));
-  });
-}
 
 registry.register(DjiParser);
