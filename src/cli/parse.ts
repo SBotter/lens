@@ -7,8 +7,7 @@
  * and writes JSON output to <session>/json/
  *
  * Usage:
- *   npm run parse -- --input ./Input/session1
- *   npm run parse -- --input ./Input/session1 --verbose
+ *   npm run parse -- ./Input/session1
  *
  * Output:
  *   ./Input/session1/json/activity.json
@@ -18,29 +17,60 @@
 import path from 'node:path';
 import fs   from 'node:fs/promises';
 
-// Import parser registry — registers all device parsers at module load time
-import { registry } from '../lib/parser/index';
+import { registry }      from '../lib/parser/index';
 import { NodeFileAdapter } from '../lib/parser/NodeFileAdapter';
 import type { ParseResult } from '../lib/parser/types';
 
 // ── CLI argument parsing ──────────────────────────────────────────────────────
 
-const args    = process.argv.slice(2);
-const inputIdx = args.indexOf('--input');
-const verbose  = args.includes('--verbose') || args.includes('-v');
+const args = process.argv.slice(2);
+// First non-flag argument is the session folder
+const sessionArg = args.find(a => !a.startsWith('-'));
 
-if (inputIdx === -1 || !args[inputIdx + 1]) {
-  console.error('Usage: npm run parse -- --input <session-folder> [--verbose]');
-  console.error('Example: npm run parse -- --input ./Input/session1');
+if (!sessionArg) {
+  console.error('Usage: npm run parse -- <session-folder>');
+  console.error('Example: npm run parse -- ./Input/gpx/garmin');
   process.exit(1);
 }
 
-const sessionDir = path.resolve(args[inputIdx + 1]);
+const sessionDir = path.resolve(sessionArg);
+
+// ── Verbose summary for a parsed result ──────────────────────────────────────
+
+function logVerbose(result: ParseResult): void {
+  if (result.kind === 'activity') {
+    const { metadata, summary, timeline, laps, quality } = result.data.activity;
+    console.log(`    vendor:      ${metadata.vendor} / ${metadata.device}`);
+    console.log(`    activity:    ${metadata.activityName} (${metadata.activityType})`);
+    console.log(`    startTime:   ${new Date(metadata.startTime).toISOString()}`);
+    console.log(`    totalTime:   ${metadata.totalTime}s  movingTime: ${metadata.movingTime}s`);
+    console.log(`    distance:    ${(summary.totalDistance / 1000).toFixed(2)} km`);
+    console.log(`    elevation:   +${summary.elevationGain.toFixed(0)}m / -${summary.elevationLoss.toFixed(0)}m`);
+    console.log(`    avgSpeed:    ${(summary.avgSpeed * 3.6).toFixed(1)} km/h  max: ${(summary.maxSpeed * 3.6).toFixed(1)} km/h`);
+    if (summary.avgHeartRate) console.log(`    HR:          avg ${summary.avgHeartRate} / max ${summary.maxHeartRate} bpm`);
+    console.log(`    stops:       ${summary.stops}  (${summary.totalStopTime}s)`);
+    console.log(`    laps:        ${laps.length}`);
+    console.log(`    points:      ${timeline.length}`);
+    console.log(`    quality:     ${(quality.overallScore * 100).toFixed(0)}%  gps: ${(quality.gpsQuality.signalConsistency * 100).toFixed(0)}%`);
+  } else {
+    console.log(`    device:     ${result.meta.deviceName}`);
+    console.log(`    startTime:  ${new Date(result.meta.startTime).toISOString()}`);
+    console.log(`    durationMs: ${result.meta.durationMs}`);
+    console.log(`    points:     ${result.points.length}`);
+    console.log(`    hasGPS:     ${result.meta.hasGPS}`);
+  }
+}
+
+// ── Point count helper ────────────────────────────────────────────────────────
+
+function pointCount(result: ParseResult): number {
+  if (result.kind === 'activity') return result.data.activity.timeline.length;
+  return result.points.length;
+}
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  // Verify the session directory exists
   try {
     const stat = await fs.stat(sessionDir);
     if (!stat.isDirectory()) throw new Error('not a directory');
@@ -53,7 +83,6 @@ async function main(): Promise<void> {
   console.log(`Session: ${sessionDir}`);
   console.log(`Registered parsers: ${registry.list().map(p => p.id).join(', ')}\n`);
 
-  // List files in session directory (skip hidden files and the json/ output folder)
   const entries = await fs.readdir(sessionDir, { withFileTypes: true });
   const files   = entries.filter(e =>
     e.isFile() &&
@@ -66,7 +95,6 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ── Parse each file ───────────────────────────────────────────────────────
   const activityResults: ParseResult[] = [];
   const videoResults:    ParseResult[] = [];
   const skipped:         string[]      = [];
@@ -76,7 +104,6 @@ async function main(): Promise<void> {
     const filePath = path.join(sessionDir, entry.name);
     const adapter  = await NodeFileAdapter.fromPath(filePath);
 
-    // Find the correct parser
     const parser = await registry.resolve(adapter);
     if (!parser) {
       console.warn(`  [SKIP] ${entry.name} — no parser matched`);
@@ -88,18 +115,10 @@ async function main(): Promise<void> {
 
     try {
       const result = await parser.parse(adapter);
-
-      if (verbose) {
-        console.log(`    kind:       ${result.kind}`);
-        console.log(`    points:     ${result.points.length}`);
-        console.log(`    device:     ${result.meta.deviceName}`);
-        console.log(`    startTime:  ${new Date(result.meta.startTime).toISOString()}`);
-        console.log(`    durationMs: ${result.meta.durationMs}`);
-      }
+      logVerbose(result);
 
       if (result.kind === 'activity') activityResults.push(result);
       else                            videoResults.push(result);
-
     } catch (err: unknown) {
       const msg = (err instanceof Error) ? err.message : String(err);
       console.error(`  [ERROR] ${entry.name}: ${msg}`);
@@ -107,7 +126,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Write JSON output ─────────────────────────────────────────────────────
+  // ── Write output JSON ─────────────────────────────────────────────────────
   const outDir = path.join(sessionDir, 'json');
   await fs.mkdir(outDir, { recursive: true });
 
@@ -115,9 +134,13 @@ async function main(): Promise<void> {
 
   if (activityResults.length > 0) {
     const outPath = path.join(outDir, 'activity.json');
-    const payload = activityResults.length === 1 ? activityResults[0] : activityResults;
+    const payload = activityResults.length === 1
+      ? (activityResults[0].kind === 'activity' ? activityResults[0].data : activityResults[0])
+      : activityResults.map(r => r.kind === 'activity' ? r.data : r);
+
     await fs.writeFile(outPath, JSON.stringify(payload, null, 2), 'utf-8');
-    console.log(`\n  [OUT] activity.json — ${activityResults.reduce((s, r) => s + r.points.length, 0)} points`);
+    const pts = activityResults.reduce((s, r) => s + pointCount(r), 0);
+    console.log(`\n  [OUT] activity.json — ${pts} timeline points`);
     wrote++;
   }
 
@@ -125,15 +148,15 @@ async function main(): Promise<void> {
     const outPath = path.join(outDir, 'video.json');
     const payload = videoResults.length === 1 ? videoResults[0] : videoResults;
     await fs.writeFile(outPath, JSON.stringify(payload, null, 2), 'utf-8');
-    console.log(`  [OUT] video.json    — ${videoResults.reduce((s, r) => s + r.points.length, 0)} points`);
+    const pts = videoResults.reduce((s, r) => s + pointCount(r), 0);
+    console.log(`  [OUT] video.json    — ${pts} points`);
     wrote++;
   }
 
-  // ── Summary ───────────────────────────────────────────────────────────────
   console.log('\n─────────────────────────────────────────');
   console.log(`Parsed:  ${activityResults.length + videoResults.length} file(s)`);
-  if (skipped.length) console.log(`Skipped: ${skipped.length} file(s) — ${skipped.join(', ')}`);
-  if (failed.length)  console.log(`Failed:  ${failed.length} file(s) — ${failed.map(f => f.name).join(', ')}`);
+  if (skipped.length) console.log(`Skipped: ${skipped.length} — ${skipped.join(', ')}`);
+  if (failed.length)  console.log(`Failed:  ${failed.length} — ${failed.map(f => f.name).join(', ')}`);
   if (wrote)          console.log(`Output:  ${outDir}/`);
   console.log('─────────────────────────────────────────\n');
 
