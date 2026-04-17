@@ -1,0 +1,73 @@
+{
+  "version": "1.1.0",
+
+  "intensity": {
+    "weights": {
+      "climb":   { "hr": 0.30, "speed": 0.10, "gradient": 0.25, "accel": 0.10, "power": 0.20, "gyro": 0.05 },
+      "descent": { "hr": 0.15, "speed": 0.30, "gradient": 0.20, "accel": 0.20, "power": 0.05, "gyro": 0.10 },
+      "mixed":   { "hr": 0.25, "speed": 0.20, "gradient": 0.20, "accel": 0.15, "power": 0.15, "gyro": 0.05 }
+    }
+  },
+
+  "scenes": {
+    "climb": {
+      "windowSec":       20,
+      "coveragePct":     0.60,
+      "hrNormThreshold": 0.85,
+      "gradientPct":     5.0
+    },
+    "descent": {
+      "windowSec":           15,
+      "coveragePct":         0.60,
+      "speedNormThreshold":  0.75,
+      "gradientPct":         -4.0
+    },
+    "sprint": {
+      "windowSec":          8,
+      "speedDeltaFraction": 0.60
+    },
+    "technical": {
+      "windowSec":          10,
+      "coveragePct":        0.50,
+      "accelNormThreshold": 0.70,
+      "minSpeedNorm":       0.20,
+      "maxSpeedNorm":       0.60
+    },
+    "suffer": {
+      "windowSec":       15,
+      "coveragePct":     0.65,
+      "hrNormThreshold": 0.88,
+      "maxSpeedNorm":    0.30
+    },
+    "flow": {
+      "climbWindowSec":     20,
+      "descentWindowSec":   15,
+      "maxGapSec":          60,
+      "minClimbGradient":   4.0,
+      "minDescentGradient": -3.0
+    }
+  },
+
+  "sync": {
+    "spatialThresholdM":    100,
+    "timeWindowMs":         300000,
+    "binMs":                5000,
+    "minVoteShare":         0.10,
+    "nccRangeMs":           60000,
+    "nccStepMs":            200,
+    "nccMinConfidence":     0.25,
+    "speedFilterKmh":       0.5,
+    "speedSpikeKmh":        150,
+    "gpsUtcClockThreshold": 1.0
+  },
+
+  "candidateSelection": {
+    "maxPerType":               3,
+    "minGapMs":                 30000,
+    "maxCandidates":            30,
+    "zoneMultipliers":          { "inside": 1.0, "near": 0.75, "far": 0.40 },
+    "videoMarginMs":            120000,
+    "overlapConflictThreshold": 0.50,
+    "overlapTiebreakPct":       0.15
+  }
+}
