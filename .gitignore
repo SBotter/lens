@@ -7,11 +7,15 @@ node_modules/
 .next/
 out/
 
+# claude
+.claude/
+
 # Build
 dist/
 
 # Test input files (potentially large video files)
 Input/
+prompt.txt
 
 # Env
 .env

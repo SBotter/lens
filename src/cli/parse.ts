@@ -17,9 +17,10 @@
 import path from 'node:path';
 import fs   from 'node:fs/promises';
 
-import { registry }      from '../lib/parser/index';
-import { NodeFileAdapter } from '../lib/parser/NodeFileAdapter';
-import type { ParseResult } from '../lib/parser/types';
+import { registry }        from '../lib/parser/index';
+import { NodeFileAdapter }  from '../lib/parser/NodeFileAdapter';
+import type { ParseResult, ActivityJSON, VideoJSON } from '../lib/parser/types';
+import { buildSession, buildRenderManifest, defaultRules } from '../lib/sync/index';
 
 // ── CLI argument parsing ──────────────────────────────────────────────────────
 
@@ -156,6 +157,33 @@ async function main(): Promise<void> {
     await fs.writeFile(outPath, JSON.stringify(payload, null, 2), 'utf-8');
     const pts = videoResults.reduce((s, r) => s + pointCount(r), 0);
     console.log(`  [OUT] video.json    — ${pts} points`);
+    wrote++;
+  }
+
+  // ── Build session.json when we have both activity and at least one video ──
+  if (activityResults.length === 1 && videoResults.length >= 1) {
+    const activity = (activityResults[0] as { kind: 'activity'; data: ActivityJSON }).data;
+    const videos   = (videoResults as Array<{ kind: 'video'; data: VideoJSON }>).map(r => r.data);
+
+    const session  = buildSession(activity, videos, defaultRules);
+    const outPath  = path.join(outDir, 'session.json');
+    await fs.writeFile(outPath, JSON.stringify(session, null, 2), 'utf-8');
+
+    const sv = session.session;
+    console.log(`  [OUT] session.json  — ${sv.candidates.length} candidates  conflicts=${sv.conflicts.length}`);
+    if (sv.videos.length > 0) {
+      for (const v of sv.videos) {
+        console.log(`         ${v.source.fileName}: offset=${v.sync.offsetMs}ms  method=${v.sync.method}  confidence=${(v.sync.confidence * 100).toFixed(0)}%  overlay=${v.sync.isOverlayUsable}  coverage=${(v.coverage.overlapFraction * 100).toFixed(0)}%`);
+      }
+    }
+    console.log(`         renderMode=${sv.report.renderMode}  "${sv.report.userMessage}"`);
+    wrote++;
+
+    // ── Build render.json — compact input for the render engine ──────────────
+    const manifest    = buildRenderManifest(session, videos);
+    const renderPath  = path.join(outDir, 'render.json');
+    await fs.writeFile(renderPath, JSON.stringify(manifest, null, 2), 'utf-8');
+    console.log(`  [OUT] render.json   — ${manifest.clips.length} clips  trackPath=${manifest.trackPath.length}pts  renderMode=${manifest.quality.renderMode}`);
     wrote++;
   }
 
